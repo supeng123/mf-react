@@ -1,70 +1,263 @@
-# Getting Started with Create React App
+### Set up steps
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+1. Create the host and remote applications, host is React and remote is Angular
 
-## Available Scripts
+   ````
+   npx create-react-app host
+   npx create-nx-workspace@latest remote angular
+   ````
 
-In the project directory, you can run:
 
-### `npm start`
+2. Delete node_modules for both applications and remove the package-lock.json
+3. Use pnpm to install all dependencies
+4. Put all content from main.ts to bootstrap.ts, then import the bootstrap.ts, so the application can be lazyloaded
+5. Write the extra-webpack.config.ts file and import moduleFederationPlugins
+6. Steps below are all for remote Angular application
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+   1. Create some libraries under the remote Angular project
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+   ````
+   nx g @nx/angular:library products --directory=libs/products --standalone
+   nx g @nx/angular:component product-list --directory=libs/products/src/lib/product-list --standalone --export
+   
+   nx g @nx/angular:library orders --directory=libs/orders --standalone
+   nx g @nx/angular:library shared-ui --directory=libs/shared/ui --standalone
+   ````
 
-### `npm test`
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+2. Export the sub-routes to index.ts file
+3. Create loadApp.ts in remote Angular project and export all the functions
 
-### `npm run build`
+   ````
+   // important,needs import zone.js, otherwise the host will not execute remoteEntry.js
+   import 'zone.js';
+   import { bootstrapApplication } from '@angular/platform-browser';
+   import { appConfig } from './app/app.config';
+   import { AppComponent } from './app/app.component';
+   
+   const mount = () => {
+       bootstrapApplication(AppComponent, appConfig).catch((err) =>
+           console.error(err)
+       );
+   }
+   
+   export { mount };
+   
+   ````
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+4. Put loadApp.ts to tsconfig.app.json file so it can be compiled by typescript
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+   ````
+   {
+     "extends": "./tsconfig.json",
+     "compilerOptions": {
+       "outDir": "../../dist/out-tsc",
+       "types": []
+     },
+     "files": ["src/main.ts", "src/loadApp.ts"],
+     "include": ["src/**/*.d.ts"],
+     "exclude": ["jest.config.ts", "src/**/*.test.ts", "src/**/*.spec.ts"]
+   }
+   ````
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
 
-### `npm run eject`
+5. Using pnpm install @angular-builders/custom-webpack and replace the executor, click [mergeRules](https://github.com/survivejs/webpack-merge#mergewithrules) to see details, for example, 'optimization ' and 'plugins' are the keywords from webpack configurations.
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+   ````
+   "build": {
+         "executor": "@angular-builders/custom-webpack:browser",
+         "options": {
+           "customWebpackConfig": {
+             "path": "./apps/remoteangular/extra-webpack.config.js",
+             "mergeRules": {
+               "optimization": "merge",
+               "plugins": "append"
+             }
+           },
+       ...
+   }
+           
+    "serve": {
+         "executor": "@angular-builders/custom-webpack:dev-server",
+         "options": {
+           "browserTarget": "remoteangular:build"
+         },
+         "configurations": {
+           "production": {
+             "buildTarget": "remoteangular:build:production"
+           },
+           "development": {
+             "buildTarget": "remoteangular:build:development"
+           }
+         },
+         "defaultConfiguration": "development"
+       },
+   
+   ````
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+6. Write the webpack-extra.config.js
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+   ````
+   const ModuleFederationPlugin = require("webpack/lib/container/ModuleFederationPlugin");
+   // important output and optimization are needed for loading the remoteEntry.js
+   module.exports = {
+       output: {
+           uniqueName: "remoteangular",
+           publicPath: "auto",
+           scriptType: "text/javascript",
+       },
+       optimization: {
+           runtimeChunk: false,
+       },
+       plugins: [
+           new ModuleFederationPlugin({
+               name: "remoteangular",
+               filename: "remoteEntry.js",
+               exposes: {
+               //important needs require.resolve, otherwise the path could not be resolved
+                   "./AppModule": require.resolve("./src/loadApp.ts")
+               }
+           })
+       ]
+   }
+   
+   ````
 
-## Learn More
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+7. Steps below are all for host React application
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+   1. install @craco/craco to config the webpack configuration by using pnpm
 
-### Code Splitting
+      ````
+      pnpm add -D @craco/craco
+      ````
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+   2. Replace the scripts in package.json with craco configurations
 
-### Analyzing the Bundle Size
+      ````
+      "scripts": {
+          "start": "set PORT=3000 && craco start",
+          "build": "craco build",
+          "test": "craco test",
+          "eject": "react-scripts eject"
+        },
+      
+      ````
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+   3. Write the craco.config.js file
 
-### Making a Progressive Web App
+      ````
+      const ModuleFederationPlugin = require("webpack").container.ModuleFederationPlugin;
+      const deps = require("./package.json").dependencies;
+      
+      module.exports = {
+        plugins: [
+          {
+            plugin: {
+              overrideWebpackConfig: ({ webpackConfig, cracoConfig, pluginOptions, context: { env, paths } }) => {
+                webpackConfig.plugins = [
+                  ...webpackConfig.plugins,
+                  new ModuleFederationPlugin({
+                    name: "app",
+                    remotes: {
+                      appModule: "remoteangular@http://localhost:4200/remoteEntry.js",
+                    },
+                    shared: {
+                      ...deps,
+                      "react-dom": {
+                        singleton: true,
+                        eager: true,
+                      },
+                      react: {
+                        singleton: true,
+                        eager: true,
+                      },
+                    },
+                  }),
+                ];
+                return webpackConfig;
+              },
+            },
+          },
+        ],
+      };
+      ````
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+   4. Create App.module.js file to import remote application
 
-### Advanced Configuration
+      ````
+      import React, { useEffect } from 'react';
+      import { mount } from "appModule/AppModule";
+      
+      const RemoteAppModule = () => {
+          useEffect(() => {
+              mount();
+          }, []);
+      
+          return (
+              <div className="remote-module">
+                  <app-root></app-root>
+              </div>
+          )
+      }
+      
+      export default RemoteAppModule;
+      ````
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
+   5. Use RemoteAppModule in App.js
 
-### Deployment
+      ````
+      import "./App.css";
+      import React from "react";
+      import RemoteAppModule from "./modules/AppModule";
+      
+      function App() {
+        return (
+          <div className="App">
+            <header className="App-header">
+              <div className="container">
+                <div className="header">
+                  <h1>REACT HOST</h1>
+                </div>
+      
+                <div className="remotes">
+                  <div className="remotes-col">
+                    <RemoteAppModule></RemoteAppModule>
+                  </div>
+                </div>
+              </div>
+            </header>
+          </div>
+        );
+      }
+      
+      export default App;
+      ````
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
 
-### `npm run build` fails to minify
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+suggestions on how to handle the router changes between react host and angular remote
+
+[https://betterprogramming.pub/event-based-routing-for-angular-micro-frontends-3bf2c9597ac1](https://betterprogramming.pub/event-based-routing-for-angular-micro-frontends-3bf2c9597ac1)
+
+CONS
+
+````
+1.There is no pratice solution for handling routes between React and Angular, that's 
+why we always see micro-frontend applications build with React with Vue or other
+frameworks, becuase React and Vue can both using browser router and memomry router.
+https://udemy.com/course/microfrontend-course
+
+2.The other module fedration solution provided by NX team also don't recomend using
+the React and Angular at the same time. https://github.com/nrwl/nx/issues/19722
+
+3.The Single-spa needs more configurations than module federation and even
+the framework Qiankun extends from Single-spa also have issues about the sub-routing
+when it comes with angular.(I used the repo trying to set second level routes in Angular
+but the whole application crashed for no reason)https://github.com/umijs/qiankun
+
+4.Web Component could be a solution but I did not try it, but needs more manual work for
+composing all the bundles together in one container
+https://www.telerik.com/blogs/angular-16-micro-frontends-angular-elements
+````
